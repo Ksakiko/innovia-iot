@@ -6,6 +6,20 @@ builder.Services.AddDbContext<InnoviaDbContext>(o =>
     o.UseNpgsql(builder.Configuration.GetConnectionString("Db")));
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddCors(opt =>
+{
+    opt.AddPolicy("Frontend", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:4200"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
+});
+
 var app = builder.Build();
 
 // Ensure database and tables exist (quick-start dev convenience)
@@ -67,6 +81,7 @@ app.MapGet("/api/tenants/{tenantId:guid}/devices/by-serial/{serial}",
     return d is null ? Results.NotFound() : Results.Ok(d);
 });
 
+app.UseCors("Frontend");
 app.Run();
 
 public class InnoviaDbContext : DbContext
