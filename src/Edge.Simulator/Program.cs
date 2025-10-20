@@ -23,29 +23,37 @@ catch (Exception ex)
 }
 
 var rand = new Random();
+var devices = new List<string>([
+"dev-101", "dev-102", "dev-103", "dev-104", "dev-105", "dev-106", "dev-107", "dev-108", "dev-109", "dev-110"
+]);
+
+
 while (true)
 {
-    var payload = new
+    foreach (var d in devices)
     {
-        deviceId = "dev-101",
-        apiKey = "dev-101-key",
-        timestamp = DateTimeOffset.UtcNow,
-        metrics = new object[]
+        var payload = new
         {
-            new { type = "temperature", value = 21.5 + rand.NextDouble(), unit = "C" },
-            new { type = "co2", value = 900 + rand.Next(0, 700), unit = "ppm" }
-        }
-    };
+            deviceId = d,
+            apiKey = $"{d}-key",
+            timestamp = DateTimeOffset.UtcNow,
+            metrics = new object[]
+            {
+                new { type = "temperature", value = 21.5 + rand.NextDouble(), unit = "C" },
+                new { type = "co2", value = 900 + rand.Next(0, 700), unit = "ppm" }
+            }
+        };
 
-    var topic = "tenants/innovia/devices/dev-101/measurements";
-    var json = JsonSerializer.Serialize(payload);
+        var topic = $"tenants/innovia/devices/{d}/measurements";
+        var json = JsonSerializer.Serialize(payload);
 
-    var message = new MqttApplicationMessageBuilder()
-        .WithTopic(topic)
-        .WithPayload(Encoding.UTF8.GetBytes(json))
-        .Build();
+        var message = new MqttApplicationMessageBuilder()
+            .WithTopic(topic)
+            .WithPayload(Encoding.UTF8.GetBytes(json))
+            .Build();
+        await client.PublishAsync(message);
+        Console.WriteLine($"[{DateTimeOffset.UtcNow:o}] Published to '{topic}': {json}"); 
+    }
 
-    await client.PublishAsync(message);
-    Console.WriteLine($"[{DateTimeOffset.UtcNow:o}] Published to '{topic}': {json}");
     await Task.Delay(TimeSpan.FromSeconds(10));
 }
