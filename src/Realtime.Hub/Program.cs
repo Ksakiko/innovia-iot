@@ -32,7 +32,14 @@ public class TelemetryHub : Hub
         await Clients.Group($"tenant:{m.TenantSlug}")
             .SendAsync("measurementReceived", m);
     }
+
+    public async Task PublishAlert(Alert a)
+    {
+        await Clients.Group($"tenant:{a.TenantSlug}")
+            .SendAsync("alertRaised", a);
+    }
 }
+
 
 public record RealtimeMeasurement(
     string TenantSlug,
@@ -41,4 +48,16 @@ public record RealtimeMeasurement(
     double Value,
     string Unit,
     System.DateTimeOffset Time
+);
+
+public record Alert(
+    Guid TenantId,
+    string TenantSlug,
+    Guid DeviceId,
+    string Type,
+    double Value,
+    DateTimeOffset Time,
+    Guid RuleId,
+    string Severity,
+    string Message
 );
