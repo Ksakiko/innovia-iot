@@ -33,12 +33,15 @@ var rulesConn = builder.Configuration.GetConnectionString("RulesDb")
     ?? "Host=localhost;Username=postgres;Password=password;Database=innovia_rules";
 var ingestConn = builder.Configuration.GetConnectionString("IngestDb")
     ?? "Host=localhost;Username=postgres;Password=password;Database=innovia_ingest";
+var deviceRegConn = builder.Configuration.GetConnectionString("DeviceRegDb")
+    ?? "Host=localhost;Username=postgres;Password=password;Database=innovia";
 var hubUrl = builder.Configuration.GetSection("Realtime")["HubUrl"]
     ?? "http://localhost:5103/hub/telemetry";
 
 // --- Services ---
 builder.Services.AddDbContext<RulesDbContext>(o => o.UseNpgsql(rulesConn));
 builder.Services.AddDbContext<IngestReadDbContext>(o => o.UseNpgsql(ingestConn));
+builder.Services.AddDbContext<DeviceRegReadDbContext>(o => o.UseNpgsql(deviceRegConn));
 
 // SignalR client to publish alerts in real time
 builder.Services.AddSingleton<HubConnection>(_ =>
@@ -133,13 +136,15 @@ public class RulesWorker : BackgroundService
     private readonly ILogger<RulesWorker> _log;
     private readonly RulesDbContext _rules;
     private readonly IngestReadDbContext _ingest;
+    private readonly DeviceRegReadDbContext _deviceReg;
     private readonly HubConnection _hub;
 
-    public RulesWorker(ILogger<RulesWorker> log, RulesDbContext rules, IngestReadDbContext ingest, HubConnection hub)
+    public RulesWorker(ILogger<RulesWorker> log, RulesDbContext rules, IngestReadDbContext ingest, DeviceRegReadDbContext deviceReg, HubConnection hub)
     {
         _log = log;
         _rules = rules;
         _ingest = ingest;
+        _deviceReg = deviceReg;
         _hub = hub;
     }
 
@@ -157,7 +162,7 @@ public class RulesWorker : BackgroundService
                 var activeRules = await _rules.Rules
                     .Where(r => r.Enabled)
                     .ToListAsync(stoppingToken);
-
+    
                 foreach (var r in activeRules)
                 {
                     // Fetch the latest measurement for the rule scope (device + type).
@@ -168,7 +173,6 @@ public class RulesWorker : BackgroundService
                         .OrderByDescending(m => m.Time)
                         .Select(m => new { m.Value, m.Time, m.DeviceId })
                         .FirstOrDefaultAsync(stoppingToken);
-
                     if (latest is null) continue;
 
                     if (Matches(r.Operator, latest.Value, r.Threshold))
@@ -200,9 +204,12 @@ public class RulesWorker : BackgroundService
                         // TODO: Implement PublishAlert on the hub; client method name can be "alertRaised" for browser subscribers.
                         try
                         {
+                            var tenant = await _deviceReg.Tenants.FirstOrDefaultAsync(x => x.Id == alert.TenantId);
+
                             await _hub.InvokeAsync("PublishAlert", new
                             {
                                 TenantId = alert.TenantId,
+                                TenantSlug = tenant?.Slug,
                                 DeviceId = alert.DeviceId,
                                 Type = alert.Type,
                                 Value = alert.Value,
@@ -277,6 +284,19 @@ public class IngestReadDbContext : DbContext
     }
 }
 
+public class DeviceRegReadDbContext : DbContext
+{
+    public DeviceRegReadDbContext(DbContextOptions<DeviceRegReadDbContext> options) : base(options) { }
+    public DbSet<Tenant> Tenants => Set<Tenant>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Tenant>().ToTable("Tenants").HasKey(t => t.Id);
+        modelBuilder.Entity<Tenant>().ToTable("Tenants").Property(t => t.Slug);
+        base.OnModelCreating(modelBuilder);
+    }
+}
+
 // --- Tables ---
 public class RuleRow
 {
@@ -313,6 +333,14 @@ public class MeasurementRow
     public Guid DeviceId { get; set; }
     public string Type { get; set; } = "";
     public double Value { get; set; }
+}
+
+// Mirror of Device Registry Tenant (read-only model)
+public class Tenant
+{
+    public Guid Id { get; }
+    public string Name { get; } = "";
+    public string Slug { get; } = "";
 }
 
 // --- DTOs ---
