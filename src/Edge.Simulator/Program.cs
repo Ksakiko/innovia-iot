@@ -40,7 +40,7 @@ while (true)
             metrics = new object[]
             {
                 new { type = "temperature", value = 21.5 + rand.NextDouble(), unit = "C" },
-                new { type = "co2", value = 900 + rand.Next(0, 700), unit = "ppm" }
+                new { type = "co2", value = 900 + rand.Next(0, 400), unit = "ppm" }
             }
         };
 
