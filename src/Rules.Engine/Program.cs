@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
+using Microsoft.EntityFrameworkCore.Design;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +34,7 @@ var rulesConn = builder.Configuration.GetConnectionString("RulesDb")
     ?? "Host=localhost;Username=postgres;Password=password;Database=innovia_rules";
 var ingestConn = builder.Configuration.GetConnectionString("IngestDb")
     ?? "Host=localhost;Username=postgres;Password=password;Database=innovia_ingest";
+// Added in order to have access to the Tenants table
 var deviceRegConn = builder.Configuration.GetConnectionString("DeviceRegDb")
     ?? "Host=localhost;Username=postgres;Password=password;Database=innovia";
 var hubUrl = builder.Configuration.GetSection("Realtime")["HubUrl"]
@@ -162,18 +164,45 @@ public class RulesWorker : BackgroundService
                 var activeRules = await _rules.Rules
                     .Where(r => r.Enabled)
                     .ToListAsync(stoppingToken);
+                
     
                 foreach (var r in activeRules)
                 {
+                    // Get a watermark for the corresponding active rule and the last point time
+                    var watermark = await _rules.Watermarks.FirstOrDefaultAsync(w => w.RuleId == r.Id);
+                    var lastPointTime = watermark?.LastPointTime ?? DateTimeOffset.MinValue;
+                    
                     // Fetch the latest measurement for the rule scope (device + type).
                     var latest = await _ingest.Measurements
                         .Where(m => m.TenantId == r.TenantId
                                     && (r.DeviceId == null || m.DeviceId == r.DeviceId)
-                                    && m.Type == r.Type)
+                                    && m.Type == r.Type
+                                    // The created time for the measurement should be later than the lastPointTime.
+                                    // In other words, if the created time is before the lastPointTime, the measurement is already seen   
+                                    && m.Time > lastPointTime
+                                    )
                         .OrderByDescending(m => m.Time)
                         .Select(m => new { m.Value, m.Time, m.DeviceId })
                         .FirstOrDefaultAsync(stoppingToken);
+
                     if (latest is null) continue;
+
+                    // If watermark data does not exist, create and add new data, otherwise update the LastPointTime 
+                    if (watermark == null)
+                    {
+                        var newWatermark = new WatermarkRow
+                        {
+                            RuleId = r.Id,
+                            LastPointTime = DateTimeOffset.UtcNow
+                        };
+
+                        _rules.Watermarks.Add(newWatermark);
+                    }
+                    else
+                    {
+                        watermark.LastPointTime = DateTimeOffset.UtcNow;
+                    }
+                    await _rules.SaveChangesAsync(stoppingToken);
 
                     if (Matches(r.Operator, latest.Value, r.Threshold))
                     {
@@ -256,17 +285,23 @@ public class RulesDbContext : DbContext
     public RulesDbContext(DbContextOptions<RulesDbContext> options) : base(options) { }
     public DbSet<RuleRow> Rules => Set<RuleRow>();
     public DbSet<AlertRow> Alerts => Set<AlertRow>();
+    public DbSet<WatermarkRow> Watermarks => Set<WatermarkRow>();
+    
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<RuleRow>().ToTable("Rules").HasKey(r => r.Id);
         modelBuilder.Entity<AlertRow>().ToTable("Alerts").HasKey(a => a.Id);
+        modelBuilder.Entity<WatermarkRow>().ToTable("Watermarks").HasKey(w => w.Id);
 
         modelBuilder.Entity<RuleRow>()
             .HasIndex(r => new { r.TenantId, r.DeviceId, r.Type, r.Enabled });
 
         modelBuilder.Entity<AlertRow>()
             .HasIndex(a => new { a.TenantId, a.DeviceId, a.Type, a.Time });
+
+        modelBuilder.Entity<WatermarkRow>()
+            .HasIndex(w => new { w.RuleId, w.LastPointTime });
 
         base.OnModelCreating(modelBuilder);
     }
@@ -324,6 +359,13 @@ public class AlertRow
     public string Message { get; set; } = "";
 }
 
+public class WatermarkRow
+{
+    public Guid Id { get; set; }
+    public Guid RuleId { get; set; }
+    public DateTimeOffset LastPointTime { get; set; }
+}
+
 // Mirror of Ingest measurement (read-only model)
 public class MeasurementRow
 {
@@ -353,3 +395,26 @@ public record RuleCreateDto(
     int? CooldownSeconds,
     bool? Enabled
 );
+
+
+public class RulesDbContextFactory : IDesignTimeDbContextFactory<RulesDbContext>
+{
+    public RulesDbContext CreateDbContext(string[] args)
+    {
+        // Build the configuration (for example, from an appsettings.json file)
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())  
+            .AddJsonFile("appsettings.json")
+            .Build();
+
+        // Get the connection string from the configuration
+        var rulesConn = configuration.GetConnectionString("RulesDb");
+
+        // Create DbContextOptions using Npgsql (PostgreSQL)
+        var optionsBuilder = new DbContextOptionsBuilder<RulesDbContext>();
+        optionsBuilder.UseNpgsql(rulesConn);
+
+        // Return a new instance of RulesDbContext
+        return new RulesDbContext(optionsBuilder.Options);
+    }
+}
