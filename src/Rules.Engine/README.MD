@@ -1,4 +1,5 @@
 # Rules.Engine dokumentation
+
 # Rules.Engine (Work in Progress)
 
 The **Rules.Engine** service is part of the Innovia IoT platform.  
@@ -13,8 +14,8 @@ Its purpose is to evaluate incoming IoT measurements against user-defined rules 
 Rules.Engine allows tenants to define simple conditions (rules) for their devices.  
 For example:
 
-- *"If temperature > 28°C, raise an alert."*
-- *"If CO₂ level exceeds 1200 ppm, notify in real-time."*
+- _"If temperature > 28°C, raise an alert."_
+- _"If CO₂ level exceeds 1200 ppm, notify in real-time."_
 
 When a rule matches, the engine stores an **alert** in the database and (optionally) pushes it to the **Realtime.Hub** via SignalR.
 
@@ -30,6 +31,7 @@ When a rule matches, the engine stores an **alert** in the database and (optiona
 - Background worker that:
   - Polls recent measurements from **Ingest** database.
   - Evaluates rules for each tenant/device.
+  - Watermark data is used during the evaluation process.
   - Creates alerts when thresholds are exceeded.
 - SignalR client integration prepared (publishes alerts to Realtime.Hub).
 
@@ -38,12 +40,14 @@ When a rule matches, the engine stores an **alert** in the database and (optiona
 ## Usage (MVP)
 
 1. Start **Rules.Engine** (requires `innovia_rules` and `innovia_ingest` databases).
+
    ```bash
    cd src/Rules.Engine
    dotnet run
    ```
 
 2. Create a rule:
+
    ```bash
    curl -X POST http://localhost:5105/rules \
      -H "Content-Type: application/json" \
@@ -59,6 +63,7 @@ When a rule matches, the engine stores an **alert** in the database and (optiona
    ```
 
 3. List rules:
+
    ```bash
    curl http://localhost:5105/rules
    ```
